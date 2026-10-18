@@ -154,4 +154,34 @@ router.post("/:id/follow", protect, async (req, res) => {
   }
 });
 
+// GET FOLLOWERS OR FOLLOWING LIST
+router.get("/:username/:listType", async (req, res) => {
+  try {
+    const { username, listType } = req.params;
+
+    if (!["followers", "following"].includes(listType)) {
+      return res.status(400).json({ message: "Invalid list type." });
+    }
+
+    const user = await User.findOne({
+      username: username.toLowerCase(),
+    }).select(listType);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const users = await User.find({
+      _id: { $in: user[listType] },
+    }).select("name username bio profilePicture");
+
+    return res.status(200).json({ users });
+  } catch (error) {
+    console.error("Followers/Following Error:", error.message);
+    return res.status(500).json({
+      message: "Unable to fetch users list.",
+    });
+  }
+});
+
 module.exports = router;
