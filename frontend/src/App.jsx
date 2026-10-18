@@ -10,6 +10,11 @@ import {
   LogOut,
   Plus,
   RefreshCw,
+  UserRound,
+  UserPlus,
+  UserCheck,
+  X,
+  ArrowLeft,
 } from "lucide-react";
 import Auth from "./AuthTemp.jsx";
 import api from "./api/api";
@@ -94,6 +99,14 @@ const styles = {
   muted: { color: "#827b94", fontSize: 13 },
 };
 
+function getId(value) {
+  if (!value) return "";
+  if (typeof value === "object") {
+    return String(value._id || value.id || "");
+  }
+  return String(value);
+}
+
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(
     Boolean(localStorage.getItem("connectify_token"))
@@ -107,6 +120,15 @@ function App() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  // Profile and followers/following states
+  const [selectedProfile, setSelectedProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [listUsers, setListUsers] = useState([]);
+  const [listType, setListType] = useState("");
+  const [listLoading, setListLoading] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -167,6 +189,98 @@ function App() {
     setContent("");
     setNotice("");
     setError("");
+    closeProfile();
+  }
+
+  function closeProfile() {
+    setSelectedProfile(null);
+    setProfileError("");
+    setListUsers([]);
+    setListType("");
+  }
+
+  async function openProfile(username) {
+    if (!username) return;
+
+    setProfileLoading(true);
+    setProfileError("");
+    setListUsers([]);
+    setListType("");
+    setSelectedProfile(null);
+
+    try {
+      const myUsername = currentUser?.username?.toLowerCase();
+
+      if (myUsername && username.toLowerCase() === myUsername) {
+        setSelectedProfile(currentUser);
+      } else {
+        const response = await api.get(
+          `/users/${encodeURIComponent(username)}`
+        );
+        setSelectedProfile(response.data.user || response.data);
+      }
+    } catch (err) {
+      setProfileError(
+        err.response?.data?.message || "Could not load this profile."
+      );
+    } finally {
+      setProfileLoading(false);
+    }
+  }
+
+  async function openUserList(type) {
+    if (!selectedProfile?.username) return;
+
+    setListLoading(true);
+    setListType(type);
+    setListUsers([]);
+    setProfileError("");
+
+    try {
+      const response = await api.get(
+        `/users/${encodeURIComponent(selectedProfile.username)}/${type}`
+      );
+
+      const users = response.data.users || [];
+      setListUsers(users);
+    } catch (err) {
+      setProfileError(
+        err.response?.data?.message ||
+          `Could not load ${type} list.`
+      );
+    } finally {
+      setListLoading(false);
+    }
+  }
+
+  async function handleFollowToggle() {
+    if (!selectedProfile?._id || followLoading) return;
+
+    setFollowLoading(true);
+    setProfileError("");
+
+    try {
+      await api.post(`/users/${selectedProfile._id}/follow`);
+
+      const [profileResponse, meResponse] = await Promise.all([
+        api.get(`/users/${encodeURIComponent(selectedProfile.username)}`),
+        api.get("/users/me"),
+      ]);
+
+      setSelectedProfile(
+        profileResponse.data.user || profileResponse.data
+      );
+      setCurrentUser(meResponse.data.user || meResponse.data);
+
+      setNotice("Follow status updated successfully.");
+    } catch (err) {
+      setProfileError(
+        err.response?.data?.message ||
+          "Could not update follow status. Please try again."
+      );
+    } finally {
+      setFollowLoading(false);
+    }
   }
 
   async function handleCreatePost(e) {
@@ -234,32 +348,67 @@ function App() {
     return <Auth onLogin={handleLogin} />;
   }
 
+  const myId = getId(currentUser?._id || currentUser?.id);
+
   const visiblePosts = posts.filter((post) => {
     const query = search.trim().toLowerCase();
     if (!query) return true;
 
-    const authorName =
-      typeof post.author === "object"
+    const author =
+      post.author && typeof post.author === "object"
         ? `${post.author.name || ""} ${post.author.username || ""}`
         : "";
 
-    return `${post.content || ""} ${authorName}`
+    return `${post.content || ""} ${author}`
       .toLowerCase()
       .includes(query);
   });
 
+  const profileFollowers = selectedProfile?.followers || [];
+  const profileFollowing = selectedProfile?.following || [];
+
+  const isOwnProfile =
+    myId &&
+    getId(selectedProfile?._id || selectedProfile?.id) === myId;
+
+  const isFollowing =
+    !isOwnProfile &&
+    profileFollowers.some((follower) => getId(follower) === myId);
+
   return (
     <div style={styles.page}>
       <header style={styles.header}>
-        <div style={styles.logo}>
+        <button
+          type="button"
+          onClick={() => {
+            closeProfile();
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+          style={{
+            ...styles.logo,
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            padding: 0,
+          }}
+          title="Go to Connectify home"
+        >
           <Users size={29} />
           <span>Connectify</span>
-        </div>
+        </button>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ ...styles.muted, display: "none" }}>
-            Welcome back!
-          </span>
+          {currentUser?.username && (
+            <button
+              type="button"
+              style={styles.secondary}
+              onClick={() => openProfile(currentUser.username)}
+            >
+              <UserRound size={17} />
+              My Profile
+            </button>
+          )}
+
           <button
             type="button"
             style={styles.secondary}
@@ -303,9 +452,11 @@ function App() {
                   .toUpperCase()}
               </div>
 
-              <div>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <strong>
-                  {currentUser.name || currentUser.username || "Connectify User"}
+                  {currentUser.name ||
+                    currentUser.username ||
+                    "Connectify User"}
                 </strong>
                 <p style={{ ...styles.muted, margin: "4px 0 0" }}>
                   {currentUser.username
@@ -313,6 +464,56 @@ function App() {
                     : currentUser.email || "Welcome to Connectify"}
                 </p>
               </div>
+
+              <button
+                type="button"
+                style={styles.secondary}
+                onClick={() => openProfile(currentUser.username)}
+              >
+                View Profile
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 22,
+                marginTop: 18,
+                paddingTop: 15,
+                borderTop: "1px solid #f0edf6",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => openProfile(currentUser.username)}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "#514568",
+                  cursor: "pointer",
+                  padding: 0,
+                  textAlign: "left",
+                }}
+              >
+                <strong>{profileFollowersCount(currentUser)}</strong>
+                <span style={styles.muted}> Followers</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openProfile(currentUser.username)}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "#514568",
+                  cursor: "pointer",
+                  padding: 0,
+                  textAlign: "left",
+                }}
+              >
+                <strong>{profileFollowingCount(currentUser)}</strong>
+                <span style={styles.muted}> Following</span>
+              </button>
             </div>
           </section>
         )}
@@ -404,7 +605,6 @@ function App() {
               ...styles.card,
               color: "#b91c1c",
               background: "#fff7f7",
-              marginBottom: 16,
             }}
           >
             {error}
@@ -418,7 +618,6 @@ function App() {
               ...styles.card,
               color: "#166534",
               background: "#f0fdf4",
-              marginBottom: 16,
             }}
           >
             {notice}
@@ -450,7 +649,9 @@ function App() {
         )}
 
         {!loading && visiblePosts.length === 0 && !error && (
-          <section style={{ ...styles.card, textAlign: "center", padding: 35 }}>
+          <section
+            style={{ ...styles.card, textAlign: "center", padding: 35 }}
+          >
             <MessageCircle
               size={34}
               color="#9a7bd9"
@@ -476,13 +677,9 @@ function App() {
           const likes = Array.isArray(post.likes) ? post.likes : [];
           const comments = Array.isArray(post.comments) ? post.comments : [];
 
-          const myId = currentUser?._id || currentUser?.id;
-
-          const alreadyLiked = likes.some((like) => {
-            const likeId =
-              typeof like === "object" ? like._id || like.id : like;
-            return myId && String(likeId) === String(myId);
-          });
+          const alreadyLiked = likes.some(
+            (like) => myId && getId(like) === myId
+          );
 
           return (
             <article key={post._id} style={styles.card}>
@@ -513,10 +710,24 @@ function App() {
                     .toUpperCase()}
                 </div>
 
-                <div>
-                  <strong>
+                <div style={{ minWidth: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => openProfile(author.username)}
+                    disabled={!author.username}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      padding: 0,
+                      color: "#272044",
+                      fontWeight: 800,
+                      cursor: author.username ? "pointer" : "default",
+                      textAlign: "left",
+                    }}
+                  >
                     {author.name || author.username || "Connectify User"}
-                  </strong>
+                  </button>
+
                   <p style={{ ...styles.muted, margin: "4px 0 0" }}>
                     {author.username ? `@${author.username} · ` : ""}
                     {post.createdAt
@@ -663,8 +874,279 @@ function App() {
           Connectify · Connect with your community
         </p>
       </main>
+
+      {/* Profile modal */}
+      {(selectedProfile || profileLoading || profileError) && (
+        <div
+          onClick={closeProfile}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 100,
+            background: "rgba(24, 16, 43, 0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            overflowY: "auto",
+          }}
+        >
+          <section
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(500px, 100%)",
+              maxHeight: "85vh",
+              overflowY: "auto",
+              background: "#ffffff",
+              borderRadius: 20,
+              padding: 22,
+              boxShadow: "0 20px 70px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 20,
+              }}
+            >
+              <h2 style={{ margin: 0, fontSize: 21 }}>User Profile</h2>
+              <button
+                type="button"
+                onClick={closeProfile}
+                aria-label="Close profile"
+                style={styles.secondary}
+              >
+                <X size={19} />
+              </button>
+            </div>
+
+            {profileLoading && <p>Loading profile...</p>}
+
+            {profileError && (
+              <p role="alert" style={{ color: "#b91c1c" }}>
+                {profileError}
+              </p>
+            )}
+
+            {selectedProfile && (
+              <>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    marginBottom: 18,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 64,
+                      height: 64,
+                      borderRadius: "50%",
+                      display: "grid",
+                      placeItems: "center",
+                      background: "#eee6ff",
+                      color: "#7138d4",
+                      fontSize: 26,
+                      fontWeight: 800,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {(selectedProfile.name ||
+                      selectedProfile.username ||
+                      "U")
+                      .charAt(0)
+                      .toUpperCase()}
+                  </div>
+
+                  <div style={{ minWidth: 0 }}>
+                    <h3 style={{ margin: "0 0 5px", overflowWrap: "anywhere" }}>
+                      {selectedProfile.name || selectedProfile.username}
+                    </h3>
+                    <p style={{ ...styles.muted, margin: 0 }}>
+                      @{selectedProfile.username}
+                    </p>
+                  </div>
+                </div>
+
+                {selectedProfile.bio && (
+                  <p style={{ lineHeight: 1.6, overflowWrap: "anywhere" }}>
+                    {selectedProfile.bio}
+                  </p>
+                )}
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 24,
+                    padding: "16px 0",
+                    borderTop: "1px solid #eee9f6",
+                    borderBottom: "1px solid #eee9f6",
+                    marginBottom: 16,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => openUserList("followers")}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      padding: 0,
+                      color: "#272044",
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    <strong>{profileFollowersCount(selectedProfile)}</strong>
+                    <div style={styles.muted}>Followers</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openUserList("following")}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      padding: 0,
+                      color: "#272044",
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    <strong>{profileFollowingCount(selectedProfile)}</strong>
+                    <div style={styles.muted}>Following</div>
+                  </button>
+                </div>
+
+                {!isOwnProfile && (
+                  <button
+                    type="button"
+                    onClick={handleFollowToggle}
+                    disabled={followLoading}
+                    style={{
+                      ...styles.primary,
+                      width: "100%",
+                      opacity: followLoading ? 0.65 : 1,
+                    }}
+                  >
+                    {isFollowing ? (
+                      <UserCheck size={18} />
+                    ) : (
+                      <UserPlus size={18} />
+                    )}
+                    {followLoading
+                      ? "Please wait..."
+                      : isFollowing
+                      ? "Unfollow"
+                      : "Follow"}
+                  </button>
+                )}
+
+                {listType && (
+                  <div style={{ marginTop: 22 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 12,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setListType("");
+                          setListUsers([]);
+                          setProfileError("");
+                        }}
+                        style={styles.secondary}
+                      >
+                        <ArrowLeft size={16} />
+                        Back
+                      </button>
+
+                      <h3 style={{ margin: 0 }}>
+                        {listType === "followers"
+                          ? "Followers"
+                          : "Following"}
+                      </h3>
+                    </div>
+
+                    {listLoading && <p>Loading users...</p>}
+
+                    {!listLoading &&
+                      listUsers.length === 0 &&
+                      !profileError && (
+                        <p style={styles.muted}>
+                          No users in this list yet.
+                        </p>
+                      )}
+
+                    {!listLoading &&
+                      listUsers.map((user) => (
+                        <button
+                          type="button"
+                          key={user._id}
+                          onClick={() => openProfile(user.username)}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 12,
+                            width: "100%",
+                            padding: "12px 4px",
+                            border: "none",
+                            borderBottom: "1px solid #f0edf6",
+                            background: "#ffffff",
+                            cursor: "pointer",
+                            textAlign: "left",
+                            color: "#272044",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: 42,
+                              height: 42,
+                              borderRadius: "50%",
+                              display: "grid",
+                              placeItems: "center",
+                              background: "#eee6ff",
+                              color: "#7138d4",
+                              fontWeight: 800,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {(user.name || user.username || "U")
+                              .charAt(0)
+                              .toUpperCase()}
+                          </div>
+
+                          <div>
+                            <strong>{user.name || user.username}</strong>
+                            <p style={{ ...styles.muted, margin: "4px 0 0" }}>
+                              @{user.username}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
+}
+
+function profileFollowersCount(user) {
+  return Array.isArray(user?.followers) ? user.followers.length : 0;
+}
+
+function profileFollowingCount(user) {
+  return Array.isArray(user?.following) ? user.following.length : 0;
 }
 
 export default App;
